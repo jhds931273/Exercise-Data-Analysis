@@ -1,0 +1,81 @@
+---
+title: "Exercise Data Analysis"
+output: html_document
+---
+
+```{r setup, include=FALSE, warning=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+library(dplyr)
+library(ggplot2)
+library(caret)
+library(randomForest)
+set.seed(1)
+```
+
+## Preprocessing
+
+```{r loading and preprocessing}
+#read in data
+training <- read.csv('pml-training.csv')
+testing <- read.csv('pml-testing.csv')
+
+#remove from training set variables not present in test set
+nas=c()
+for(i in 1:dim(testing)[2]) {
+  nas[i] = as.logical(sum(is.na(testing[,i])) != dim(testing)[1])
+}
+training <- training[,nas]
+testing <- testing[,nas]
+
+#remove duplicate ID column and undesired features
+training <- training[,-c(1,3,4,6,7)]
+testing <- testing[,-c(1,3,4,6,7)]
+
+#partition data
+partition1 <- createDataPartition(training$classe, p=0.2, list=FALSE)
+CVtest1 <- training[partition1,]
+CVtrain1 <- training[-partition1,]
+
+#centre and normalise data and obtain principal components
+PC <- preProcess(CVtrain1, method='pca', pcaComp=5)
+trainPP <- predict(PC, CVtrain1)
+testPP <- predict(PC, CVtest1)
+```
+
+The data was preprocessed using the following steps:
+
+First, as the model is being constructed for the purpose of predictions on the 20-entry test set provided, variables not present in that set were removed from the training set.
+
+Second, superfluous variables such as the numerical row ID, raw timestamps and window were removed, leaving only subject, time and mechanical variables.
+
+Third, 20% of the training set variables were partitioned to serve as a test set for error rate validation.
+
+Fourth, the data was centred and normalised using the caret package 'preProcess()' function. Then, five principal components were constructed out of the remaining variables for use in the model training. This number of components was chosen due to local computational constraints: more variables causes the models to take too long to train.
+
+## Model Selection and Cross-Validation
+
+```{r training, message=FALSE, results='hide'}
+fitPP5dt <- train(classe~., data=trainPP, method='rpart')
+fitPP5rf <- train(classe~., data=trainPP, method='rf')
+fitPP5lm <- train(classe~., data=trainPP, method='LogitBoost')
+fitPP5nn <- train(classe~., data=trainPP, method='nnet')
+```
+
+Four models were tried: a decision tree, a random forest, a boosted logistic regression and a three-layer neural network. The decision tree was chosen for its simplicity to provide a quickly-computable baseline. The three remaining models are different types of complex model, to maximise the chance of finding a type of model appropriate for the data set.
+
+Each was trained using the 'train()' function of the caret package. The parameters for each were determined by cross-validation using 25-repetition bootstrap resampling. This was performed within the train function. However, as bootstrap resampling can underestimate error rate, the accuracy was independently validated using the previously partitioned test set.
+
+## Results
+```{r testing}
+predPP5dt <- predict(fitPP5dt, testPP)
+accPP5dt <- sum(predPP5dt==testPP$classe)/length(predPP5dt)
+predPP5rf <- predict(fitPP5rf, testPP)
+accPP5rf <- sum(predPP5rf==testPP$classe)/length(predPP5rf)
+predPP5lm <- predict(fitPP5lm, testPP)
+lmNAmask <- !is.na(predPP5lm)
+accPP5lm <- sum(predPP5lm[lmNAmask]==testPP$classe[lmNAmask])/length(predPP5lm)
+predPP5nn <- predict(fitPP5nn, testPP)
+accPP5nn <- sum(predPP5nn==testPP$classe)/length(predPP5nn)
+```
+
+On the partitioned test set, the decision tree model achieved an accuracy of `r signif(accPP5dt,3)`, the random forest model an accuracy of `r signif(accPP5rf,3)`, the boosted logistic regressor an accuracy of `r signif(accPP5lm,3)`, and the neural network an accuracy of `r signif(accPP5nn,3)`. The random forest was the most successful model, and the expected out-of-sample error is `r signif(accPP5rf,3)`, as this was the performance on the partitioned data not used for training.
